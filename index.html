@@ -177,6 +177,7 @@ nav button.rec-on::after{content:"";display:inline-block;width:7px;height:7px;bo
       <span id="ivLeft">00:00</span>
     </div>
     <div class="bar" id="ivBarW" hidden><i id="ivBar"></i></div>
+    <button class="ghost" id="ivSkip" hidden>Passer à la phase suivante ⏭</button>
 
     <div class="panel">
       <div class="grid">
@@ -414,7 +415,7 @@ function show(v){view=v;document.querySelectorAll(".view").forEach(s=>s.hidden=s
   scrollTo(0,0);if(v==="acts")drawActs();if(v==="stats")drawStats();if(v==="plan")drawPlan();if(v==="run")requestAnimationFrame(()=>{drawLive();drawTrace($("trace"),R.pts)})}
 
 /* ================= course en cours ================= */
-const newR=()=>({st:"idle",acc:0,since:0,wall:0,pts:[],dist:0,mov:0,gain:0,ref:null,ema:null,splits:[],lse:0,pa:{},vmax:0,iv:null,ivIdx:-1,ivDone:false,cd:null,goal:0,goalDone:false,manual:false,gap:false,type:"Course",label:"",planId:""});
+const newR=()=>({st:"idle",acc:0,since:0,wall:0,pts:[],dist:0,mov:0,gain:0,ref:null,ema:null,splits:[],lse:0,pa:{},vmax:0,ivOff:0,iv:null,ivIdx:-1,ivDone:false,cd:null,goal:0,goalDone:false,manual:false,gap:false,type:"Course",label:"",planId:""});
 let R=Object.assign(newR(),store.get("ro-cur",{}));
 const el=()=>R.acc+(R.st==="run"?(Date.now()-R.since)/1000:0);
 let lastSave=0;function saveR(){store.set("ro-cur",R);lastSave=Date.now()}
@@ -442,7 +443,7 @@ function onPos(p){const c=p.coords;GPS.acc=c.accuracy;GPS.st="ok";GPS.last=Date.
   if(d<4||dt<=0||d/dt>9)return;            // bruit GPS ou saut impossible (> 32 km/h)
   const prev=R.dist;R.dist+=d;pt[4]=+R.dist.toFixed(1);R.pts.push(pt);
   if(dt<30&&d/dt>0.6)R.mov+=dt;             // temps en mouvement
-  if(R.iv&&dt<30){const s=ivState(pt[2]-dt/2);if(s.p){R.pa=R.pa||{};const q=R.pa[s.i]||(R.pa[s.i]={d:0,t:0});q.d+=d;q.t+=dt}}
+  if(R.iv&&dt<30){const s=ivState(pt[2]-dt/2+(R.ivOff||0));if(s.p){R.pa=R.pa||{};const q=R.pa[s.i]||(R.pa[s.i]={d:0,t:0});q.d+=d;q.t+=dt}}
   {const cp=curPace();if(isFinite(cp)){const v=3600/cp;if(v<30&&v>(R.vmax||0))R.vmax=+v.toFixed(2)}}
   if(pt[3]!=null){R.ema=R.ema==null?pt[3]:R.ema*.8+pt[3]*.2;if(R.ref==null)R.ref=R.ema;
     if(R.ema-R.ref>3){R.gain+=R.ema-R.ref;R.ref=R.ema}else if(R.ema<R.ref-3)R.ref=R.ema}
@@ -472,6 +473,7 @@ function ivTick(e){if(!R.iv)return;const s=ivState(e);
   if(s.p&&R.st==="run"&&s.left<=3.05&&s.left>.2&&Math.ceil(s.left)!==R.cd){R.cd=Math.ceil(s.left);beep(1,660)}}
 
 /* ---- boutons ---- */
+$("ivSkip").onclick=()=>{if(!R.iv||R.st==="idle")return;const s=ivState(el()+(R.ivOff||0));if(!s.p)return;R.ivOff=(R.ivOff||0)+s.left+0.01;ivTick(el()+R.ivOff);saveR();drawLive()};
 $("go").onclick=()=>{unlock();
   if(R.st==="idle"){R=newR();R.wall=Date.now();R.since=Date.now();R.st="run";
     R.iv=OPT.iv?buildIv():null;R.type=OPT.iv?"Intervalles":"Course";R.goal=(parseFloat(String(OPT.goal).replace(",","."))||0)*1000;R.label=OPT.label||"";R.planId=OPT.planId||"";
@@ -513,18 +515,19 @@ function drawLive(){const e=el(),st=R.st;
   document.querySelector('nav button[data-v="run"]').classList.toggle("rec-on",st!=="idle");
   // intervalles
   const iv=st!=="idle"?R.iv:null;$("ivBox").hidden=$("ivBarW").hidden=!iv;
-  if(iv){const s=ivState(e),tot=iv.reduce((a,b)=>a+b.d,0);
+  if(iv){const ie=e+(R.ivOff||0),s=ivState(ie),tot=iv.reduce((a,b)=>a+b.d,0);
     {const q=s.p&&R.pa&&R.pa[s.i];$("ivSpd").textContent=q&&q.t>5?`Vitesse de cette phase : ${kmh(q.d,q.t)} km/h`:""}
     if(s.p){$("ivBox").className="ivb "+s.p.k;$("ivPh").textContent=s.p.n+(s.p.rep&&s.p.k==="run"?` ${s.p.rep}/${s.p.of}`:"");$("ivLeft").textContent=fmt(s.left);const nx=iv[s.i+1];$("ivNext").textContent=nx?`Ensuite : ${nx.n.toLowerCase()} ${fmt(nx.d)}`:"Dernière phase"}
     else{$("ivBox").className="ivb";$("ivPh").textContent="Terminé ✓";$("ivLeft").textContent="";$("ivNext").textContent="Continue ou appuie sur Terminer"}
-    $("ivBar").style.width=Math.min(100,e/tot*100)+"%"}
+    $("ivBar").style.width=Math.min(100,ie/tot*100)+"%";$("ivSkip").hidden=!s.p}
+  else $("ivSkip").hidden=true;
   // splits
   $("splitsBox").hidden=!R.splits.length;if(R.splits.length)$("lSplits").innerHTML=splitRows(R.splits);
   $("ptsN").textContent=R.pts.length?`${R.pts.length} points`:"";
   if(Date.now()-lastTrace>2000&&view==="run"){lastTrace=Date.now();drawTrace($("trace"),R.pts)}}
 function splitRows(sp){const mn=Math.min(...sp);return sp.map((s,i)=>`<li class="${s===mn&&sp.length>1?"fast":""}"><span>Km ${i+1}</span><span class="sb" style="width:${Math.max(12,mn/s*100).toFixed(0)}%"></span><span>${fmtP(s)}</span></li>`).join("")}
 
-setInterval(()=>{if(R.st==="idle")return;if(R.st==="run"){ivTick(el());if(GPS.st==="ok"&&Date.now()-GPS.last>15000){GPS.st="seek";drawGps()}if(Date.now()-lastSave>5000)saveR()}if(view==="run")drawLive()},250);
+setInterval(()=>{if(R.st==="idle")return;if(R.st==="run"){ivTick(el()+(R.ivOff||0));if(GPS.st==="ok"&&Date.now()-GPS.last>15000){GPS.st="seek";drawGps()}if(Date.now()-lastSave>5000)saveR()}if(view==="run")drawLive()},250);
 document.addEventListener("visibilitychange",()=>{if(document.hidden){if(R.st!=="idle")saveR()}else if(R.st==="run")wake(true)});
 addEventListener("pagehide",()=>{if(R.st!=="idle")saveR()});
 
